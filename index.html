@@ -1,0 +1,143 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Consola de sonido D&D</title>
+<link href="https://fonts.googleapis.com/css2?family=Spectral:wght@500;700&display=swap" rel="stylesheet">
+<style>
+:root{--bg:#16201f;--panel:#213130;--line:#38504d;--text:#e6e1d3;--mut:#9fb0aa;--gold:#d9a441;--red:#b8574a}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);font:15px/1.4 system-ui,sans-serif;padding:20px}
+h1{font:700 28px Spectral,Georgia,serif;margin:0 0 4px}
+p.sub{margin:0 0 18px;color:var(--mut)}
+.add{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:22px}
+input[type=text]{background:var(--panel);border:1px solid var(--line);color:var(--text);padding:10px 12px;border-radius:6px;font:inherit}
+#url{flex:3 1 260px}#name{flex:1 1 160px}
+button{background:var(--panel);color:var(--text);border:1px solid var(--line);padding:9px 14px;border-radius:6px;font:inherit;cursor:pointer}
+button:hover{border-color:var(--gold)}
+button:focus-visible,input:focus-visible{outline:2px solid var(--gold);outline-offset:2px}
+button.main{background:var(--gold);color:#1b1608;border-color:var(--gold);font-weight:600}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px}
+.card{background:var(--panel);border:1px solid var(--line);border-radius:8px;padding:12px;transition:border-color .2s,box-shadow .2s}
+.card.on{border-color:var(--gold);box-shadow:0 0 0 1px var(--gold)}
+.card h2{font:700 18px Spectral,Georgia,serif;margin:0 0 8px;display:flex;justify-content:space-between;gap:8px}
+.card h2 span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.x{padding:0 8px;border:0;background:none;color:var(--mut)}
+.vid{position:relative;aspect-ratio:16/9;background:#0c1211;border-radius:4px;overflow:hidden;margin-bottom:10px}
+.vid iframe,.vid div{position:absolute;inset:0;width:100%;height:100%}
+.row{display:flex;gap:6px;align-items:center;margin-bottom:8px;flex-wrap:wrap}
+.row input[type=range]{flex:1;min-width:100px;accent-color:var(--gold)}
+.state{font-size:13px;color:var(--mut);min-width:34px;text-align:right}
+label.loop{font-size:13px;color:var(--mut);display:flex;gap:4px;align-items:center;margin-left:auto}
+.empty{color:var(--mut);padding:30px;border:1px dashed var(--line);border-radius:8px;text-align:center}
+.bar{display:flex;gap:8px;margin-bottom:16px}
+.err{color:#e59a8e;margin:-14px 0 14px;min-height:1em}
+</style>
+</head>
+<body>
+<h1>Consola de sonido</h1>
+<p class="sub">Pegá links de YouTube, dejalos cargados y mezclalos en la mesa. Se guardan en este navegador.</p>
+
+<div class="add">
+  <input type="text" id="url" placeholder="Link de YouTube (video o con &amp;t=)">
+  <input type="text" id="name" placeholder="Nombre (opcional)">
+  <button class="main" id="addBtn">Agregar pista</button>
+</div>
+<div class="err" id="err"></div>
+<div class="bar">
+  <button id="stopAll">Pausar todo</button>
+  <button id="fadeAll">Fundir todo a silencio</button>
+</div>
+<div class="grid" id="grid"></div>
+
+<script>
+const KEY='dnd-consola-v1';
+let tracks=[];try{tracks=JSON.parse(localStorage.getItem(KEY))||[]}catch(e){}
+const players={};let apiReady=false;
+const save=()=>{try{localStorage.setItem(KEY,JSON.stringify(tracks))}catch(e){}};
+const $=s=>document.querySelector(s);
+
+function parseId(u){
+  const m=u.match(/(?:v=|youtu\.be\/|embed\/|shorts\/|live\/)([\w-]{11})/);
+  return m?m[1]:(/^[\w-]{11}$/.test(u.trim())?u.trim():null);
+}
+function parseStart(u){const m=u.match(/[?&#]t=(\d+)/);return m?+m[1]:0}
+
+function render(){
+  const g=$('#grid');g.innerHTML='';
+  if(!tracks.length){g.innerHTML='<div class="empty">Todavía no hay pistas. Pegá un link arriba para armar tu primera: lluvia, taberna, batalla…</div>';return}
+  tracks.forEach(t=>{
+    const c=document.createElement('div');c.className='card';c.id='c'+t.id;
+    c.innerHTML=`<h2><span title="${t.name}">${t.name}</span><button class="x" title="Quitar pista" aria-label="Quitar ${t.name}">✕</button></h2>
+    <div class="vid"><div id="p${t.id}"></div></div>
+    <div class="row"><button data-a="play">Play</button><button data-a="reset">Reiniciar</button><button data-a="fin">Fade in</button><button data-a="fout">Fade out</button></div>
+    <div class="row"><input type="range" min="0" max="100" value="${t.vol}" aria-label="Volumen de ${t.name}"><span class="state">${t.vol}%</span>
+    <label class="loop"><input type="checkbox" ${t.loop?'checked':''}> Loop</label></div>`;
+    g.appendChild(c);
+    c.querySelector('.x').onclick=()=>remove(t.id);
+    c.querySelector('[data-a=play]').onclick=()=>toggle(t);
+    c.querySelector('[data-a=reset]').onclick=()=>{const p=players[t.id];if(p){p.seekTo(t.start||0,true);p.playVideo()}};
+    c.querySelector('[data-a=fin]').onclick=()=>fade(t,0,t.vol,true);
+    c.querySelector('[data-a=fout]').onclick=()=>fade(t,null,0,false);
+    const r=c.querySelector('input[type=range]');
+    r.oninput=()=>{t.vol=+r.value;c.querySelector('.state').textContent=t.vol+'%';players[t.id]?.setVolume(t.vol);save()};
+    c.querySelector('.loop input').onchange=e=>{t.loop=e.target.checked;save()};
+    if(apiReady)mount(t);
+  });
+}
+
+function mount(t){
+  players[t.id]=new YT.Player('p'+t.id,{
+    videoId:t.vid,
+    playerVars:{playsinline:1,rel:0,modestbranding:1,start:t.start||0},
+    events:{
+      onReady:e=>{e.target.setVolume(t.vol);e.target.cueVideoById({videoId:t.vid,startSeconds:t.start||0});
+        if(t.auto){t.name=e.target.getVideoData().title||t.name;t.auto=false;save();const h=document.querySelector('#c'+t.id+' h2 span');if(h)h.textContent=t.name}},
+      onStateChange:e=>{
+        const card=document.getElementById('c'+t.id);if(!card)return;
+        const playing=e.data===1;card.classList.toggle('on',playing);
+        card.querySelector('[data-a=play]').textContent=playing?'Pausa':'Play';
+        if(e.data===0&&t.loop){e.target.seekTo(t.start||0,true);e.target.playVideo()}
+      }
+    }
+  });
+}
+
+function toggle(t){const p=players[t.id];if(!p)return;p.getPlayerState()===1?p.pauseVideo():(p.setVolume(t.vol),p.playVideo())}
+
+const timers={};
+function fade(t,from,to,play,ms=2500){
+  const p=players[t.id];if(!p)return;
+  clearInterval(timers[t.id]);
+  if(play){p.setVolume(0);p.playVideo()}
+  let cur=from===null?p.getVolume():from;const steps=25,target=to===0?0:to,d=(target-cur)/steps;
+  timers[t.id]=setInterval(()=>{
+    cur+=d;p.setVolume(Math.max(0,Math.min(100,cur)));
+    if((d>=0&&cur>=target)||(d<0&&cur<=target)){
+      clearInterval(timers[t.id]);p.setVolume(target);
+      if(target===0&&!play){p.pauseVideo();p.setVolume(t.vol)}
+    }
+  },ms/steps);
+}
+
+function remove(id){players[id]?.destroy();delete players[id];tracks=tracks.filter(t=>t.id!==id);save();render()}
+
+$('#addBtn').onclick=()=>{
+  const u=$('#url').value.trim(),vid=parseId(u);
+  if(!vid){$('#err').textContent='No pude leer ese link. Probá con uno de youtube.com/watch?v=… o youtu.be/…';return}
+  $('#err').textContent='';
+  const n=$('#name').value.trim();
+  tracks.push({id:Date.now().toString(36),vid,start:parseStart(u),name:n||'Cargando…',auto:!n,vol:60,loop:true});
+  $('#url').value='';$('#name').value='';save();render();
+};
+$('#url').addEventListener('keydown',e=>{if(e.key==='Enter')$('#addBtn').click()});
+$('#stopAll').onclick=()=>tracks.forEach(t=>players[t.id]?.pauseVideo());
+$('#fadeAll').onclick=()=>tracks.forEach(t=>{if(players[t.id]?.getPlayerState()===1)fade(t,null,0,false)});
+
+render();
+const s=document.createElement('script');s.src='https://www.youtube.com/iframe_api';document.head.appendChild(s);
+window.onYouTubeIframeAPIReady=()=>{apiReady=true;tracks.forEach(mount)};
+</script>
+</body>
+</html>
