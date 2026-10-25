@@ -62,6 +62,7 @@ body[data-size=s] .tm{display:none}
 #scenes{display:flex;gap:6px;flex-wrap:wrap;align-items:center;margin-bottom:10px}
 .scn{border-color:var(--gold);border-radius:99px;padding:4px 12px}
 .sx{padding:2px 6px!important;margin-left:-4px;border-radius:99px;color:var(--mut)}
+.cats .tab.sx,.subs .tab.sx{font:14px system-ui,sans-serif;border:0;background:none;padding:2px 6px;margin-left:-6px;color:var(--mut)}
 #pool{position:fixed;right:0;bottom:0;width:200px;height:200px;opacity:0;pointer-events:none;z-index:-1}
 dialog{background:var(--panel);color:var(--text);border:1px solid var(--gold);border-radius:10px;padding:18px;width:min(380px,92vw)}
 dialog::backdrop{background:rgba(0,0,0,.6)}
@@ -89,6 +90,13 @@ dialog select{width:100%;margin-top:3px}dialog input[type=text]{margin-top:3px}
 <div id="scenes"></div>
 <div id="panes"></div>
 <div id="pool"></div>
+
+<dialog id="dlg2">
+  <h2 id="d2t"></h2>
+  <label>Nombre<input type="text" id="d2n"></label>
+  <div id="d2e" style="color:#e59a8e;font-size:12px;min-height:1em"></div>
+  <div class="acts"><button id="d2d" style="margin-right:auto">Borrar</button><button id="d2c">Cancelar</button><button class="main" id="d2o">Guardar</button></div>
+</dialog>
 
 <dialog id="dlg">
   <h2 id="dt"></h2>
@@ -141,26 +149,17 @@ function tab(label,active,fn,drop,ren,add){
   return b;
 }
 function fixPanes(){const cs=Object.keys(S.cats);S.panes.forEach(p=>{if(!S.cats[p.cat])p.cat=cs[0];if(p.sub!=='*'&&!S.cats[p.cat].includes(p.sub))p.sub='*'})}
-function renameCat(c){
-  const n=prompt('Nuevo nombre (vacío = borrar, solo si no tiene pistas)',c);if(n===null)return;const k=n.trim();
-  if(!k){if(S.tracks.some(t=>t.cat===c)||Object.keys(S.cats).length<2)return msg('Solo se puede borrar una categoría vacía (y tiene que quedar al menos una).');delete S.cats[c]}
-  else if(k!==c&&!S.cats[k]){S.cats=Object.fromEntries(Object.entries(S.cats).map(([a,b])=>[a===c?k:a,b]));S.tracks.forEach(t=>{if(t.cat===c)t.cat=k});S.panes.forEach(p=>{if(p.cat===c)p.cat=k})}
-  fixPanes();save();render();
-}
-function renameSub(pc,s){
-  const n=prompt('Nuevo nombre (vacío = borrar, solo si no tiene pistas)',s);if(n===null)return;const k=n.trim(),arr=S.cats[pc];
-  if(!k){if(S.tracks.some(t=>t.cat===pc&&t.sub===s))return msg('Solo se puede borrar una subcategoría vacía.');arr.splice(arr.indexOf(s),1)}
-  else if(k!==s&&!arr.includes(k)){arr[arr.indexOf(s)]=k;S.tracks.forEach(t=>{if(t.cat===pc&&t.sub===s)t.sub=k});S.panes.forEach(p=>{if(p.cat===pc&&p.sub===s)p.sub=k})}
-  fixPanes();save();render();
-}
+function renameCat(c){openTabDlg('cat',null,c)}
+function renameSub(pc,s){openTabDlg('sub',pc,s)}
+const editBtn=fn=>{const b=document.createElement('button');b.className='tab sx';b.textContent='✎';b.title='Editar o borrar';b.onclick=fn;return b};
 function renderTabs(pn,P,i){
   const go=(c,s)=>{if(c!==undefined)P.cat=c;P.sub=s;ap=i;save();render()};
   const ct=pn.querySelector('.cats');
-  Object.keys(S.cats).forEach(c=>ct.appendChild(tab(c,c===P.cat,()=>go(c,'*'),{cat:c},()=>renameCat(c))));
+  Object.keys(S.cats).forEach(c=>{ct.appendChild(tab(c,c===P.cat,()=>go(c,'*'),{cat:c},()=>renameCat(c)));if(c===P.cat)ct.appendChild(editBtn(()=>renameCat(c)))});
   ct.appendChild(tab('+ Categoría',false,()=>{const n=(prompt('Nombre de la categoría')||'').trim();if(n&&!S.cats[n]){S.cats[n]=[];go(n,'*')}},null,null,true));
   const sb=pn.querySelector('.subs');
   sb.appendChild(tab('Todas',P.sub==='*',()=>go(undefined,'*')));
-  S.cats[P.cat].forEach(s=>sb.appendChild(tab(s,P.sub===s,()=>go(undefined,s),{cat:P.cat,sub:s},()=>renameSub(P.cat,s))));
+  S.cats[P.cat].forEach(s=>{sb.appendChild(tab(s,P.sub===s,()=>go(undefined,s),{cat:P.cat,sub:s},()=>renameSub(P.cat,s)));if(P.sub===s)sb.appendChild(editBtn(()=>renameSub(P.cat,s)))});
   sb.appendChild(tab('+ Subcategoría',false,()=>{const n=(prompt('Nombre de la subcategoría')||'').trim();if(n&&!S.cats[P.cat].includes(n)){S.cats[P.cat].push(n);go(undefined,n)}},null,null,true));
 }
 
@@ -256,7 +255,9 @@ setInterval(()=>{
 
 /* ---------- atajos, crossfade, escenas, búsqueda ---------- */
 function playT(t){
-  const p=players[t.id];if(!p||!st[t.id]?.ready)return;p.setVolume(eff(t));
+  const p=players[t.id];
+  if(!p||!st[t.id]?.ready){msg(st[t.id]?.err?`«${t.name}» no se pudo cargar (video sin permiso de embebido, link inválido o archivo faltante).`:`«${t.name}» todavía no cargó. Si pasan varios segundos, revisá la conexión o si un bloqueador de anuncios frena YouTube.`);return}
+  msg('');p.setVolume(eff(t));
   if(t.mode==='once'){p.seekTo(t.start||0,true);p.playVideo()}else st[t.id].playing?p.pauseVideo():p.playVideo();
 }
 function xfade(t){
@@ -350,6 +351,47 @@ async function addFiles(files,o){
   save();render();
 }
 
+/* ---------- editar / borrar categorías ---------- */
+let d2=null;
+function dropTrack(id){
+  try{players[id]?.destroy()}catch(x){}idbDel(id);delete players[id];delete st[id];document.getElementById('p'+id)?.remove();
+  S.tracks=S.tracks.filter(t=>t.id!==id);S.scenes.forEach(sc=>sc.items=sc.items.filter(i=>i.id!==id));
+}
+function openTabDlg(kind,pc,name){
+  d2={kind,pc,name};$('#d2t').textContent=kind==='cat'?'Editar categoría':'Editar subcategoría';
+  $('#d2n').value=name;$('#d2e').textContent='';$('#dlg2').showModal();
+}
+$('#d2c').onclick=e=>{e.preventDefault();$('#dlg2').close()};
+$('#d2o').onclick=e=>{
+  e.preventDefault();const k=$('#d2n').value.trim(),{kind,pc,name}=d2;
+  if(!k){$('#d2e').textContent='Poné un nombre.';return}
+  if(k!==name){
+    if(kind==='cat'){
+      if(S.cats[k]){$('#d2e').textContent='Ya existe una categoría con ese nombre.';return}
+      S.cats=Object.fromEntries(Object.entries(S.cats).map(([a,b])=>[a===name?k:a,b]));
+      S.tracks.forEach(t=>{if(t.cat===name)t.cat=k});S.panes.forEach(p=>{if(p.cat===name)p.cat=k});
+    }else{
+      const arr=S.cats[pc];if(arr.includes(k)){$('#d2e').textContent='Ya existe una subcategoría con ese nombre.';return}
+      arr[arr.indexOf(name)]=k;S.tracks.forEach(t=>{if(t.cat===pc&&t.sub===name)t.sub=k});S.panes.forEach(p=>{if(p.cat===pc&&p.sub===name)p.sub=k});
+    }
+  }
+  fixPanes();save();$('#dlg2').close();render();
+};
+$('#d2d').onclick=e=>{
+  e.preventDefault();const {kind,pc,name}=d2;
+  if(kind==='cat'){
+    if(Object.keys(S.cats).length<2){$('#d2e').textContent='Tiene que quedar al menos una categoría.';return}
+    const n=S.tracks.filter(t=>t.cat===name);
+    if(n.length&&!confirm(`«${name}» tiene ${n.length} pista(s). Se borran junto con la categoría. ¿Seguir?`))return;
+    n.forEach(t=>dropTrack(t.id));delete S.cats[name];
+  }else{
+    const arr=S.cats[pc],n=S.tracks.filter(t=>t.cat===pc&&t.sub===name);
+    if(n.length&&!confirm(`«${name}» tiene ${n.length} pista(s). Pasan a «sin subcategoría» (las ves en «Todas»). ¿Seguir?`))return;
+    n.forEach(t=>t.sub='');arr.splice(arr.indexOf(name),1);
+  }
+  fixPanes();save();$('#dlg2').close();render();
+};
+
 /* ---------- diálogo agregar / editar ---------- */
 function fillSubs(sel){const a=S.cats[$('#cat').value]||[];$('#sub').innerHTML=a.length?a.map(s=>`<option>${esc(s)}</option>`).join(''):'<option value="">(sin subcategoría)</option>';if(sel!==undefined)$('#sub').value=sel}
 function openDlg(t){
@@ -402,7 +444,8 @@ if(location.protocol==='file:')msg('Abierto desde disco: YouTube va a dar «Erro
 render();
 S.tracks.filter(t=>t.src==='file').forEach(mountLocal);
 const sc=document.createElement('script');sc.src='https://www.youtube.com/iframe_api';document.head.appendChild(sc);
-window.onYouTubeIframeAPIReady=()=>{apiReady=true;S.tracks.forEach(mount)};
+window.onYouTubeIframeAPIReady=()=>{apiReady=true;if($('#msg').textContent.startsWith('No cargó'))msg('');S.tracks.forEach(mount)};
+setTimeout(()=>{if(!apiReady&&S.tracks.some(t=>t.src!=='file'))msg('No cargó el reproductor de YouTube. Revisá la conexión o si un bloqueador de anuncios lo está frenando.')},8000);
 </script>
 </body>
 </html>
