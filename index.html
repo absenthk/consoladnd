@@ -93,6 +93,7 @@ dialog select{width:100%;margin-top:3px}dialog input[type=text]{margin-top:3px}
 <dialog id="dlg">
   <h2 id="dt"></h2>
   <label id="fu">Link de YouTube<input type="text" id="url" placeholder="https://youtu.be/…"></label>
+  <label id="ff">…o archivos de audio de tu dispositivo<input type="file" id="fl" accept="audio/*" multiple style="margin-top:3px;width:100%"></label>
   <label>Nombre (opcional)<input type="text" id="nm"></label>
   <label>Categoría<select id="cat"></select></label>
   <label>Subcategoría<select id="sub"></select></label>
@@ -114,6 +115,7 @@ S.scenes=S.scenes||[];
 fixPanes();
 let ap=0,dragId=null,apiReady=false,searching=false;
 const AP=()=>S.panes[ap]||S.panes[0];
+const thumb=t=>t.src==='file'?'data:image/svg+xml,'+encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" width="64" height="36"><rect width="64" height="36" fill="#2a3d3b"/><text x="32" y="26" font-size="20" text-anchor="middle" fill="#d9a441">♪</text></svg>'):`https://i.ytimg.com/vi/${t.vid}/default.jpg`;
 const kl=c=>c.replace(/^(Key|Digit)/,'');
 const nz=s=>s.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'');
 const players={},st={};
@@ -155,18 +157,18 @@ function renderTabs(pn,P,i){
   const go=(c,s)=>{if(c!==undefined)P.cat=c;P.sub=s;ap=i;save();render()};
   const ct=pn.querySelector('.cats');
   Object.keys(S.cats).forEach(c=>ct.appendChild(tab(c,c===P.cat,()=>go(c,'*'),{cat:c},()=>renameCat(c))));
-  ct.appendChild(tab('+ Categoría',()=>{const n=(prompt('Nombre de la categoría')||'').trim();if(n&&!S.cats[n]){S.cats[n]=[];go(n,'*')}},null,null,true));
+  ct.appendChild(tab('+ Categoría',false,()=>{const n=(prompt('Nombre de la categoría')||'').trim();if(n&&!S.cats[n]){S.cats[n]=[];go(n,'*')}},null,null,true));
   const sb=pn.querySelector('.subs');
   sb.appendChild(tab('Todas',P.sub==='*',()=>go(undefined,'*')));
   S.cats[P.cat].forEach(s=>sb.appendChild(tab(s,P.sub===s,()=>go(undefined,s),{cat:P.cat,sub:s},()=>renameSub(P.cat,s))));
-  sb.appendChild(tab('+ Subcategoría',()=>{const n=(prompt('Nombre de la subcategoría')||'').trim();if(n&&!S.cats[P.cat].includes(n)){S.cats[P.cat].push(n);go(undefined,n)}},null,null,true));
+  sb.appendChild(tab('+ Subcategoría',false,()=>{const n=(prompt('Nombre de la subcategoría')||'').trim();if(n&&!S.cats[P.cat].includes(n)){S.cats[P.cat].push(n);go(undefined,n)}},null,null,true));
 }
 
 /* ---------- filas ---------- */
 function row(t){
   const r=document.createElement('div');r.className='row'+(st[t.id]?.playing?' on':'')+(st[t.id]?.err?' bad':'');r.dataset.id=t.id;
   r.innerHTML=`<span class="gp" draggable="true" title="Arrastrar para ordenar o mover a otra pestaña">⠿</span>
-  <img class="th" src="https://i.ytimg.com/vi/${t.vid}/default.jpg" alt="" draggable="false">
+  <img class="th" src="${thumb(t)}" alt="" draggable="false">
   <div class="nm"><b title="${esc(t.name)}">${esc(t.name)}</b><small>${searching?esc(t.cat)+' / ':''}${esc(t.sub||'')}${t.mode==='once'?' (one-shot)':''}${t.key?`<span class="kb">${kl(t.key)}</span>`:''}</small></div>
   <button class="pl" title="${t.mode==='once'?'Disparar':'Play / pausa'}">${st[t.id]?.playing&&t.mode!=='once'?'⏸':'▶'}</button>
   <button class="rs" title="Reiniciar">↺</button><button class="fd" title="Fade in / fade out">≋</button>${t.mode==='once'?'':'<button class="xf" title="Crossfade: baja lo demás de esta categoría y sube esta">⇄</button>'}
@@ -220,6 +222,7 @@ function mark(t){
 
 /* ---------- audio ---------- */
 function mount(t){
+  if(t.src==='file')return mountLocal(t);
   if(players[t.id])return;
   const d=document.createElement('div');d.id='p'+t.id;$('#pool').appendChild(d);st[t.id]={};
   players[t.id]=new YT.Player(d.id,{width:200,height:200,videoId:t.vid,
@@ -313,12 +316,46 @@ $('#kb').onkeydown=e=>{
   if(/^(Key|Digit)/.test(e.code)){k.dataset.code=e.code;k.value=kl(e.code)}
 };
 
+/* ---------- audio local (IndexedDB) ---------- */
+const idb=()=>new Promise((res,rej)=>{const r=indexedDB.open('dnd-consola-audio',1);r.onupgradeneeded=()=>r.result.createObjectStore('f');r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+const idbPut=async(k,v)=>{const d=await idb();return new Promise((res,rej)=>{const tx=d.transaction('f','readwrite');tx.objectStore('f').put(v,k);tx.oncomplete=res;tx.onerror=()=>rej(tx.error)})};
+const idbGet=async k=>{try{const d=await idb();return await new Promise(res=>{const q=d.transaction('f').objectStore('f').get(k);q.onsuccess=()=>res(q.result);q.onerror=()=>res(null)})}catch(e){return null}};
+const idbDel=async k=>{try{const d=await idb();d.transaction('f','readwrite').objectStore('f').delete(k)}catch(e){}};
+function mountLocal(t){
+  if(st[t.id])return;st[t.id]={};
+  idbGet(t.id).then(blob=>{
+    if(!blob){st[t.id].err=true;msg(`Falta el archivo de «${t.name}» en este navegador (los audios locales no viajan con Exportar). Volvé a cargarlo.`);renderPanes();return}
+    const a=new Audio(URL.createObjectURL(blob));a.preload='auto';a.volume=Math.min(1,eff(t)/100);
+    players[t.id]={
+      setVolume:v=>{a.volume=Math.max(0,Math.min(1,v/100))},getVolume:()=>a.volume*100,
+      playVideo:()=>{a.loop=t.mode==='loop';a.play().catch(()=>{})},pauseVideo:()=>a.pause(),
+      seekTo:s=>{a.currentTime=s},getDuration:()=>isFinite(a.duration)?a.duration:0,getCurrentTime:()=>a.currentTime,
+      getPlayerState:()=>a.paused?2:1,getVideoData:()=>({title:t.name}),destroy:()=>{a.pause();URL.revokeObjectURL(a.src)}
+    };
+    a.onplaying=()=>{st[t.id].playing=true;mark(t)};
+    a.onpause=()=>{st[t.id].playing=false;mark(t)};
+    a.onerror=()=>{st[t.id].err=true;msg(`No se pudo reproducir el archivo de «${t.name}».`);renderPanes()};
+    st[t.id].ready=true;
+  });
+}
+async function addFiles(files,o){
+  try{navigator.storage?.persist?.()}catch(e){}
+  for(const [i,f] of files.entries()){
+    const t={id:Date.now().toString(36)+i,src:'file',fname:f.name,start:0,vol:60,mode:o.mode,cat:o.cat,sub:o.sub,
+      name:(files.length===1&&o.n)?o.n:f.name.replace(/\.[^.]+$/,'')};
+    try{await idbPut(t.id,f)}catch(e){msg('El navegador no dejó guardar «'+f.name+'» (modo privado o sin espacio).');continue}
+    if(files.length===1)setKeyFrom(t);
+    S.tracks.push(t);mountLocal(t);
+  }
+  save();render();
+}
+
 /* ---------- diálogo agregar / editar ---------- */
 function fillSubs(sel){const a=S.cats[$('#cat').value]||[];$('#sub').innerHTML=a.length?a.map(s=>`<option>${esc(s)}</option>`).join(''):'<option value="">(sin subcategoría)</option>';if(sel!==undefined)$('#sub').value=sel}
 function openDlg(t){
   const d=$('#dlg');d.dataset.id=t?t.id:'';$('#e2').textContent='';
   $('#dt').textContent=t?'Editar pista':'Nueva pista';
-  $('#fu').hidden=!!t;$('#del').hidden=!t;$('#url').value='';$('#nm').value=t?t.name:'';
+  $('#fu').hidden=$('#ff').hidden=!!t;$('#fl').value='';$('#del').hidden=!t;$('#url').value='';$('#nm').value=t?t.name:'';
   $('#cat').innerHTML=Object.keys(S.cats).map(c=>`<option>${esc(c)}</option>`).join('');
   $('#cat').value=t?t.cat:AP().cat;
   fillSubs(t?t.sub:(AP().sub==='*'?(S.cats[AP().cat][0]||''):AP().sub));
@@ -330,6 +367,8 @@ $('#cx').onclick=e=>{e.preventDefault();$('#dlg').close()};
 $('#ok').onclick=e=>{
   e.preventDefault();const id=$('#dlg').dataset.id,cat=$('#cat').value,sub=$('#sub').value,mode=$('#md').value,n=$('#nm').value.trim();
   if(id){const t=byId(id);Object.assign(t,{name:n||t.name,cat,sub,mode});setKeyFrom(t);save();$('#dlg').close();render();return}
+  const files=[...$('#fl').files];
+  if(files.length){{const P=AP(),all=P.cat===cat&&P.sub==='*';P.cat=cat;P.sub=all?'*':sub}$('#dlg').close();addFiles(files,{cat,sub,mode,n});return}
   const u=$('#url').value.trim(),vid=parseId(u);
   if(!vid){$('#e2').textContent='No pude leer ese link. Probá con youtube.com/watch?v=… o youtu.be/…';return}
   const t={id:Date.now().toString(36),vid,start:parseStart(u),name:n||'Cargando…',auto:!n,vol:60,mode,cat,sub};
@@ -338,7 +377,7 @@ $('#ok').onclick=e=>{
 };
 $('#del').onclick=e=>{
   e.preventDefault();const id=$('#dlg').dataset.id;
-  try{players[id]?.destroy()}catch(x){}
+  try{players[id]?.destroy()}catch(x){}idbDel(id);
   delete players[id];delete st[id];document.getElementById('p'+id)?.remove();
   S.tracks=S.tracks.filter(t=>t.id!==id);save();$('#dlg').close();render();
 };
@@ -361,6 +400,7 @@ $('#np').value=S.panes.length;
 $('#np').onchange=e=>{const n=+e.target.value,cs=Object.keys(S.cats);while(S.panes.length<n)S.panes.push({cat:cs[S.panes.length%cs.length],sub:'*'});S.panes.length=n;if(ap>=n)ap=0;save();render()};
 if(location.protocol==='file:')msg('Abierto desde disco: YouTube va a dar «Error 153». Subilo a un hosting (GitHub Pages) o usá un servidor local.');
 render();
+S.tracks.filter(t=>t.src==='file').forEach(mountLocal);
 const sc=document.createElement('script');sc.src='https://www.youtube.com/iframe_api';document.head.appendChild(sc);
 window.onYouTubeIframeAPIReady=()=>{apiReady=true;S.tracks.forEach(mount)};
 </script>
